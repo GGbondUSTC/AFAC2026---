@@ -372,5 +372,41 @@
         "our_solution/output/v18_combo_probe.json"
       ]
     }
+  ],
+  "plans": [
+    {
+      "name": "v19_plan",
+      "created_at": "2026-06-17",
+      "status": "planned_not_published",
+      "source": "GPT Pro review suggestion absorbed into docs/V19_PLAN.md",
+      "baseline": "v17",
+      "classification_decision": "reuse v8/v17 A1 by default; classification is probe-only",
+      "recommendation_direction": "exact-length validation plus short-history count/Bayes tail rerank with top1 frozen",
+      "first_candidate": "v19a_short_len3_only_alpha04",
+      "candidate_order": [
+        "v19a_short_len3_only_alpha04",
+        "v19b_short_len1_3_alpha035_050",
+        "v19c_zero_bayes_shrink_alpha03",
+        "v19d_combo_b_plus_c"
+      ],
+      "target_lengths": [3, 1],
+      "do_not_touch_initially": ["seq_len=2", "seq_len>=4", "classification"],
+      "required_validation": {
+        "seeds": [42, 43, 44, 45, 46, 47, 48],
+        "compare_against": "v17",
+        "mean_exact_weighted_delta_min": 0.0012,
+        "min_exact_weighted_delta_min": 0.0005,
+        "negative_split_count": 0,
+        "short_history_top1_changed": 0,
+        "seq_len2_changed_rows": 0,
+        "seq_len_ge4_changed_rows": 0
+      },
+      "docs": [
+        "docs/V19_PLAN.md",
+        "docs/GPT_PRO_REVIEW.md",
+        "分数记录.md",
+        "上下文维护.md"
+      ]
+    }
   ]
 }

@@ -57,6 +57,7 @@ The GitHub repository intentionally excludes local data, generated CSV/zip submi
 - `v16` zero-history dropout/seed tweak gave only a small positive transfer.
 - `v17` conservative short-history rerank gave a small positive transfer: recommendation `+0.0003` versus v16.
 - `v18_probe` was rejected: stronger short-history and zero-history 5-seed variants were not robust over multiple splits.
+- Latest v19 direction is documented in `docs/V19_PLAN.md`: upgrade validation to exact-length multi-split, then test short-history count/Bayes tail rerank with top1 frozen.
 
 ## Current Guardrail
 
@@ -70,6 +71,19 @@ Suggested submission threshold:
 - For `seq_len=1/2/3`, keep `top1_changed == 0` unless evidence is much stronger
 - Do not submit gains around `+0.0001` to `+0.0003`
 
+## Current v19 Plan
+
+Do not continue tuning v17/v18 neural tower strength. The next serious experiment should be:
+
+```text
+exact-length multi-split validation
++ pairwise delta vs v17
++ short-history count/Bayes tail rerank
++ top1 freeze
+```
+
+Read `docs/V19_PLAN.md` before proposing new experiments. The current preferred first candidate is `v19a_short_len3_only_alpha04`, followed by `v19b_short_len1_3_alpha035_050` only if v19a passes the guard.
+
 ## Questions For GPT Pro
 
 1. Given `recommendation.py`, what new feature families or model structures are likely to improve zero-history or very-short-history recommendation beyond the current user-feature MLP and rule fusion?
@@ -77,6 +91,7 @@ Suggested submission threshold:
 3. Is there a safe way to use item metadata or target prior smoothing that could improve zero-history top10 ranking?
 4. Are there classification changes that can beat `0.7586` with a low number of changed rows, or should classification remain frozen?
 5. Which concrete v19 experiment should be implemented first, and what exact guard metrics should decide whether to submit it?
+6. Is the `docs/V19_PLAN.md` count/Bayes short-history rerank likely to transfer online better than v15/v18 neural rerank? If not, propose a stronger alternative with the same risk controls.
 
 ## Constraints
 

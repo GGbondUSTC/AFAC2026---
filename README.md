@@ -15,6 +15,8 @@ The public GitHub version is intended for code review and strategy analysis. It 
 
 Recent diagnosis: `v18_probe` tested stronger short-history rerank and zero-history 5-seed neural ensembles, but multi-split validation was not robust enough. It was not submitted and did not replace `v17`.
 
+Current v19 plan: upgrade validation to exact-length multi-split evaluation, then test a short-history count/Bayes tail reranker with `top1` frozen. See `docs/V19_PLAN.md`.
+
 ## Repository Layout
 
 ```text
@@ -36,6 +38,7 @@ versions/
 进阶教程.md                 Advanced tutorial notes
 AGENTS.md                   Contributor guide
 docs/GPT_PRO_REVIEW.md      Suggested prompt/context for GPT Pro review
+docs/V19_PLAN.md            Current v19 improvement plan
 ```
 
 Ignored local-only paths include `A分类/`, `A推荐/`, `prediction.zip`, `our_solution/output*/`, versioned submission CSV/zip files, `.env`, and baseline bundled data/output.
@@ -101,7 +104,8 @@ The main open problem is recommendation improvement. Classification has been sta
 Recommended review starting points:
 
 1. `docs/GPT_PRO_REVIEW.md`
-2. `分数记录.md`
-3. `versions/VERSION_INDEX.json`
-4. `our_solution/src/recommendation.py`
-5. `our_solution/src/classification.py`
+2. `docs/V19_PLAN.md`
+3. `分数记录.md`
+4. `versions/VERSION_INDEX.json`
+5. `our_solution/src/recommendation.py`
+6. `our_solution/src/classification.py`
