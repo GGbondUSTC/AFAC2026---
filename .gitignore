@@ -1,0 +1,50 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Local competition data
+A分类/*
+!A分类/README.md
+A推荐/*
+!A推荐/README.md
+
+# Root-level submission artifacts
+prediction.zip
+LATEST_VERSION.txt
+
+# Solution runtime outputs and probes
+our_solution/output*/
+
+# Versioned artifacts; keep only the structured public index
+versions/*
+!versions/VERSION_INDEX.json
+
+# Baseline bundled data, models, and run outputs; keep source code and docs
+Baseline源代码-赛题三：稀疏反馈baseline/framework/data/
+Baseline源代码-赛题三：稀疏反馈baseline/framework/output/
+Baseline源代码-赛题三：稀疏反馈baseline/framework/agent_run.log
+
+# Model checkpoints and logs
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.log
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

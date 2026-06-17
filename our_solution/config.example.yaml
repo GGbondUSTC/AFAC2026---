@@ -1,0 +1,17 @@
+# This file documents the recommended run parameters.
+# run.py currently uses command-line arguments as the source of truth.
+
+seed: 42
+budget: 5
+val_ratio: 0.12
+time_limit: 7200
+
+classification:
+  # Replace these with B leaderboard paths when needed.
+  cls_data: "../A分类/A1.npz"
+  cls_sample: "../A分类/sample_submission.csv"
+
+recommendation:
+  rec_data: "../A推荐"
+
+output_dir: "./output"
