@@ -1,4 +1,13 @@
-# v19 提分方案
+# v19 历史提分方案与结论
+
+> 当前状态：该方案已完成 probe，未通过提交门槛，未生成 `versions/v19/` 提交包。当前官方最佳是 `v24`，下一轮主线已转为 `docs/DATA_FIRST_IMPROVEMENT_PLAN.md` 的数据优先审计。
+
+## 复盘结论
+
+- v19 的 exact-length validation 工具和短历史 count/Bayes tail rerank 已实现。
+- `v19a_short_len3_only_alpha04` 在 3 split 上为负，保守 grid 最优也接近 0 且存在负 split。
+- 结论：短历史 count/Bayes rerank 没有足够证据替代 `v17`，更不能替代后续已验证的 `v24`。
+- 后续不要继续围绕 v19 参数微调，除非新的数据审计发现明确的短历史分布错配。
 
 ## 核心判断
 

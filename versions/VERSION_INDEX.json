@@ -216,7 +216,7 @@
       "expected_official_a_classification": 0.7586,
       "expected_official_a_recommendation": 0.4926,
       "expected_official_a_total": 0.6256,
-      "official_a_status": "pending",
+      "official_a_status": "superseded_unsubmitted",
       "version_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\versions\\v13\\prediction.zip",
       "latest_root_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\prediction.zip"
     },
@@ -314,21 +314,193 @@
       "online_diagnosis": "Small positive transfer: official recommendation +0.0003 and total +0.0001 versus v16; rank unchanged at 25.",
       "version_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\versions\\v17\\prediction.zip",
       "latest_root_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\prediction.zip"
+    },
+    {
+      "version": "v20",
+      "created_at": "2026-06-17T21:43:55",
+      "note": "分类LP零传播Ridge fallback alpha=0.2；推荐复用v17",
+      "classification_val_acc": 0.7481089258698941,
+      "recommendation_val_ndcg@10": 0.568907403498473,
+      "recommendation_test_weighted_ndcg@10": 0.4796881814507714,
+      "internal_avg": 0.6585081646841835,
+      "reused_task1": false,
+      "reused_task2": true,
+      "classification_multisplit_mean_acc": 0.7511346444780636,
+      "classification_multisplit_min_acc": 0.7481089258698941,
+      "classification_multisplit_baseline_v7_mean_acc": 0.7496217851739788,
+      "classification_multisplit_baseline_v7_min_acc": 0.7465960665658093,
+      "a1_diff_vs_v17": 55,
+      "a2_same_as_v17": true,
+      "official_a_submit_time": "2026-06-17 21:47:37",
+      "official_a_classification": 0.7535,
+      "official_a_recommendation": 0.4947,
+      "official_a_total": 0.6241,
+      "official_a_status": "rejected",
+      "online_diagnosis": "Classification-only probe regressed online: recommendation stayed equal to v17 at 0.4947, but classification dropped from v17 0.7586 to 0.7535. Root prediction.zip was rolled back to v17.",
+      "version_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\versions\\v20\\prediction.zip",
+      "latest_root_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\prediction.zip"
+    },
+    {
+      "version": "v21",
+      "created_at": "2026-06-17T22:16:12",
+      "note": "分类v7线上最佳基础上应用beta=-0.10安全标签对pair gate；推荐复用v17",
+      "classification_val_acc": 0.7488653555219364,
+      "recommendation_val_ndcg@10": 0.568907403498473,
+      "recommendation_test_weighted_ndcg@10": 0.4796881814507714,
+      "internal_avg": 0.6588863795102047,
+      "reused_task1": false,
+      "reused_task2": true,
+      "classification_pair_gate_mean_delta_vs_v7_10split": 0.0027231467473525115,
+      "classification_pair_gate_min_delta_vs_v7_10split": 0.0007564296520423675,
+      "a1_diff_vs_v17": 9,
+      "a2_same_as_v17": true,
+      "official_a_submit_time": "2026-06-18 13:39:43",
+      "official_a_classification": 0.759,
+      "official_a_recommendation": 0.4947,
+      "official_a_total": 0.6268,
+      "official_a_rank": null,
+      "official_a_status": "verified",
+      "validation_note": "Classification-only pair gate. Starts from v7/v17 official-best A1 and only applies beta=-0.10 alternative labels for 10 historically positive label-pairs. Ten split probe versus v7: mean delta +0.002723, min +0.000756; final A1 changes 9 rows. Recommendation reuses v17.",
+      "online_diagnosis": "Small positive transfer: official classification improved from v17 0.7586 to 0.7590, recommendation stayed 0.4947, and total improved from 0.6266 to 0.6268.",
+      "version_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\versions\\v21\\prediction.zip",
+      "latest_root_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\prediction.zip"
+    },
+    {
+      "version": "v22",
+      "created_at": "2026-06-18T14:24:28",
+      "note": "推荐v17基础上对seq_len>=31长历史用户按历史频次和最近性重排top20尾部；top1冻结；分类复用v21",
+      "classification_val_acc": 0.7488653555219364,
+      "recommendation_val_ndcg@10": 0.5765170824626992,
+      "recommendation_test_weighted_ndcg@10": 0.48046211801308236,
+      "internal_avg": 0.6626912189923178,
+      "reused_task1": true,
+      "reused_task2": false,
+      "recommendation_multisplit_mean_delta_vs_v17_5split": 0.000669,
+      "recommendation_multisplit_min_delta_vs_v17_5split": 0.000327,
+      "a1_same_as_v21": true,
+      "a2_diff_vs_v21": 580,
+      "a2_changed_seq_len_31_80": 134,
+      "a2_changed_seq_len_gt80": 446,
+      "a2_top1_changed_vs_v21": 0,
+      "official_a_status": "verified",
+      "validation_note": "Recommendation-only candidate on top of v21. Reuses v21 A1. On v17/v21 recommendation, freezes top1 and reranks base top20 tail for seq_len>=31 using in-history frequency and recency. Five split probe versus v17: mean exact-weighted delta +0.000669, min +0.000327; all changed A2 rows are seq_len>=31 and top1_changed=0.",
+      "version_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\versions\\v22\\prediction.zip",
+      "latest_root_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\prediction.zip",
+      "official_a_submit_time": "2026-06-18 14:30:24",
+      "official_a_classification": 0.759,
+      "official_a_recommendation": 0.4958,
+      "official_a_total": 0.6274,
+      "official_a_rank": 27,
+      "online_diagnosis": "Positive transfer: classification stayed at v21 0.7590, recommendation improved from v21/v17 0.4947 to 0.4958, total improved from 0.6268 to 0.6274; rank reported as 27 at submission time."
+    },
+    {
+      "version": "v23",
+      "created_at": "2026-06-18T14:50:36",
+      "note": "推荐v22长历史重排增强版：seq_len>=31、top1冻结、base_pool=20、alpha=0.20；分类复用v22",
+      "classification_val_acc": 0.7488653555219364,
+      "recommendation_val_ndcg@10": 0.5806068145743468,
+      "recommendation_test_weighted_ndcg@10": 0.4808560442539278,
+      "internal_avg": 0.6647360850481416,
+      "reused_task1": true,
+      "reused_task2": false,
+      "version_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\versions\\v23\\prediction.zip",
+      "latest_root_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\prediction.zip",
+      "recommendation_multisplit_mean_delta_vs_v17_5split": 0.000949,
+      "recommendation_multisplit_min_delta_vs_v17_5split": 0.000651,
+      "recommendation_multisplit_mean_delta_vs_v22_5split": 0.00028,
+      "recommendation_multisplit_min_delta_vs_v22_5split": 0.000324,
+      "a1_same_as_v22": true,
+      "a2_diff_vs_v22": 596,
+      "a2_changed_seq_len_31_80": 143,
+      "a2_changed_seq_len_gt80": 453,
+      "a2_top1_changed_vs_v22": 0,
+      "official_a_status": "superseded_unsubmitted",
+      "validation_note": "Recommendation-only candidate on top of v22. Reuses v22 A1 and keeps the same seq_len>=31 top1-frozen long-history rerank, increasing alpha from 0.10 to 0.20. Five split probe versus v17: mean exact-weighted delta +0.000949, min +0.000651; versus v22 probe mean improves about +0.000280. Final A2 changes 596 rows versus v22, all seq_len>=31, top1_changed=0. Superseded by submitted v24/v25 without being submitted."
+    },
+    {
+      "version": "v24",
+      "created_at": "2026-06-18T15:13:09",
+      "note": "推荐v23基础上扩展中长历史：seq_len>=21、top1冻结、base_pool=20、alpha=0.25；分类复用v22",
+      "classification_val_acc": 0.7488653555219364,
+      "recommendation_val_ndcg@10": 0.5819830864650568,
+      "recommendation_test_weighted_ndcg@10": 0.48095263628719476,
+      "internal_avg": 0.6654242209934966,
+      "reused_task1": true,
+      "reused_task2": false,
+      "version_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\versions\\v24\\prediction.zip",
+      "latest_root_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\prediction.zip",
+      "recommendation_multisplit_mean_delta_vs_v17_5split": 0.001044,
+      "recommendation_multisplit_min_delta_vs_v17_5split": 0.000773,
+      "recommendation_multisplit_mean_delta_vs_v22_5split": 0.000375,
+      "recommendation_multisplit_min_delta_vs_v22_5split": 0.000446,
+      "recommendation_multisplit_mean_delta_vs_v23_5split": 9.5e-05,
+      "recommendation_multisplit_min_delta_vs_v23_5split": 0.000122,
+      "a1_same_as_v22": true,
+      "a2_diff_vs_v22": 626,
+      "a2_diff_vs_v23": 385,
+      "a2_changed_seq_len_11_30_vs_v22": 21,
+      "a2_changed_seq_len_31_80_vs_v22": 148,
+      "a2_changed_seq_len_gt80_vs_v22": 457,
+      "a2_top1_changed_vs_v22": 0,
+      "official_a_status": "verified",
+      "validation_note": "Recommendation-only candidate on top of official-best v22. Reuses v22 A1. Extends the top1-frozen history frequency/recency tail rerank from seq_len>=31 to seq_len>=21 and raises alpha to 0.25. Five split probe versus v17: mean exact-weighted delta +0.001044, min +0.000773; versus v22 probe mean improves about +0.000375. Final A2 changes 626 rows versus v22, with only 21 changes in seq_len=11-30, and top1_changed=0.",
+      "official_a_submit_time": "2026-06-18 15:17:54",
+      "official_a_classification": 0.759,
+      "official_a_recommendation": 0.4962,
+      "official_a_total": 0.6276,
+      "official_a_rank": 27,
+      "online_diagnosis": "Positive transfer: classification stayed at v22 0.7590, recommendation improved from v22 0.4958 to 0.4962, total improved from 0.6274 to 0.6276; rank unchanged at 27."
+    },
+    {
+      "version": "v25",
+      "created_at": "2026-06-18T15:46:59",
+      "note": "推荐v24细调：seq_len>=21、top1冻结、base_pool=25、alpha=0.32；分类复用v24",
+      "classification_val_acc": 0.7488653555219364,
+      "recommendation_val_ndcg@10": 0.5831159182053851,
+      "recommendation_test_weighted_ndcg@10": 0.48115072898008576,
+      "internal_avg": 0.6659906368636608,
+      "reused_task1": true,
+      "reused_task2": false,
+      "version_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\versions\\v25\\prediction.zip",
+      "latest_root_zip": "E:\\desktop\\Artificial-Intelligence\\AFAC2026挑战组-赛题三：稀疏反馈下的自动化实验挑战\\prediction.zip",
+      "recommendation_multisplit_mean_delta_vs_v17_8split": 0.001098,
+      "recommendation_multisplit_min_delta_vs_v17_8split": 0.000823,
+      "recommendation_multisplit_mean_delta_vs_v24_8split": 0.000125,
+      "recommendation_multisplit_min_delta_vs_v24_8split": 6.6e-05,
+      "a1_same_as_v24": true,
+      "a2_diff_vs_v24": 416,
+      "a2_diff_vs_v22": 651,
+      "a2_changed_seq_len_11_30_vs_v24": 13,
+      "a2_changed_seq_len_31_80_vs_v24": 91,
+      "a2_changed_seq_len_gt80_vs_v24": 312,
+      "a2_top1_changed_vs_v24": 0,
+      "official_a_status": "verified_tie_below_replacement_threshold",
+      "validation_note": "Recommendation-only candidate on top of official-best v24. Reuses v24 A1. Keeps min_len=21 and top1 frozen, increases base_pool from 20 to 25 and alpha from 0.25 to 0.32. Eight split focused probe: mean exact-weighted delta versus v17 +0.001098, min +0.000823; versus v24 probe mean improves about +0.000125. Final A2 changes 416 rows versus v24, with only 13 changes in seq_len=11-30, and top1_changed=0.",
+      "official_a_submit_time": "2026-06-18 15:53:44",
+      "official_a_classification": 0.759,
+      "official_a_recommendation": 0.4962,
+      "official_a_total": 0.6276,
+      "official_a_rank": null,
+      "online_diagnosis": "No visible transfer: classification, recommendation, and total stayed equal to official-best v24 at 0.7590/0.4962/0.6276. Keep v24 as official best because v25 changes extra A2 rows without improving the rounded official score."
     }
   ],
-  "best_by_internal_validation": "v15",
+  "best_by_internal_validation": "v25",
   "best_by_recommendation_test_weighted": "v15",
-  "best_actionable_by_internal_validation": "v17",
-  "best_actionable_by_recommendation_test_weighted": "v17",
-  "best_by_official_a": "v17",
-  "current_submission_candidate": "v17",
-  "current_submission_reason": "v17 is official A best: total 0.6266, classification 0.7586, recommendation 0.4947, rank 25. Gain over v16 is small (+0.0001 total), so future submissions need a higher evidence threshold.",
+  "best_actionable_by_internal_validation": "v24",
+  "best_actionable_by_recommendation_test_weighted": "v24",
+  "best_by_official_a": "v24",
+  "current_submission_candidate": "v24",
+  "current_submission_reason": "v25 was submitted at 2026-06-18 15:53:44 and tied v24 on rounded official A score (0.7590/0.4962/0.6276). v26 post-v25 grid was rejected because the best 5-split delta versus v24 was only about +0.00012, similar to v25 non-transfer. Root prediction.zip is rolled back to official-best v24.",
   "current_a_leader": {
-    "observed_at": "2026-06-16",
+    "observed_at": "2026-06-17",
     "rank": 1,
-    "total": 0.63524,
-    "classification": 0.76409,
-    "recommendation": 0.50639
+    "team_name": "非稳态",
+    "organization": "浙江大学宁波理工学院",
+    "total": 0.63578,
+    "classification": 0.76518,
+    "recommendation": 0.50639,
+    "submission_count": 28,
+    "best_submission_date": "2026-06-17"
   },
   "probes": [
     {
@@ -344,10 +516,16 @@
         "probe_v18_zero_5seed_drop35_delta": 0.0004818040173713012
       },
       "multi_split": {
-        "seeds": [42, 43, 44, 45, 46],
+        "seeds": [
+          42,
+          43,
+          44,
+          45,
+          46
+        ],
         "probe_short_alpha012_pool15": {
-          "mean_delta": 0.000047837154221186395,
-          "min_delta": -0.00008252369917671754
+          "mean_delta": 4.7837154221186395e-05,
+          "min_delta": -8.252369917671754e-05
         },
         "v18_zero_5seed_drop35_rank055": {
           "mean_delta": -0.001009680863397422,
@@ -358,11 +536,11 @@
           "min_delta": -0.0008051796880895745
         },
         "v18_combo_zero5_seed11_keep_v17short": {
-          "mean_delta": -0.00006188582334113458,
+          "mean_delta": -6.188582334113458e-05,
           "min_delta": -0.000821742928082736
         },
         "v18_combo_zero5_seed11_rank045_keep_v17short": {
-          "mean_delta": -0.00007945684926865537,
+          "mean_delta": -7.945684926865537e-05,
           "min_delta": -0.000945284622329845
         }
       },
@@ -371,6 +549,61 @@
         "our_solution/output/v18_multisplit_probe.json",
         "our_solution/output/v18_combo_probe.json"
       ]
+    },
+    {
+      "name": "v19_probe",
+      "created_at": "2026-06-17",
+      "status": "rejected_not_published",
+      "baseline": "v17",
+      "task": "recommendation",
+      "classification_decision": "reuse_v8_v17_a1; do not change classification",
+      "summary": "Implemented exact-length pairwise validation and short-history count/Bayes tail rerank. v19a and conservative grid probes did not meet guard; root prediction.zip remains v17.",
+      "single_candidate": {
+        "candidate": "v19a_short_len3_only_alpha04",
+        "seeds": [
+          42,
+          43,
+          44
+        ],
+        "mean_exact_weighted_delta": -0.0007131914730815944,
+        "min_exact_weighted_delta": -0.0011692231645393791,
+        "len3_mean_delta": -0.0016117321425573132,
+        "len3_mean_changed_rows": 1865.3333333333333,
+        "guard_pass": false
+      },
+      "conservative_grid": {
+        "seeds": [
+          42,
+          43,
+          44
+        ],
+        "best_by_mean": {
+          "candidate": "v19_len1_only_group_a02",
+          "mean_exact_weighted_delta": -2e-06,
+          "min_exact_weighted_delta": -1.2e-05
+        },
+        "guard_pass": false
+      },
+      "artifacts": [
+        "our_solution/output/v19_multisplit_eval_v19a_3seed.json",
+        "our_solution/output/v19_grid_eval_3seed.json"
+      ]
+    },
+    {
+      "name": "v26_post_v25_probe",
+      "created_at": "2026-06-18",
+      "status": "rejected_not_published",
+      "baseline": "v24",
+      "task": "recommendation",
+      "classification_decision": "reuse v24 A1",
+      "summary": "Expanded medium-long history rerank grid after v25 tied v24 online. Best 5-split candidate v26_len21_pool25_count_only_alpha0.4 had mean exact-weighted delta +0.001163 versus v17, only about +0.000119 over v24 5-split mean; this is the same scale as v25 non-transfer, so no v26 submission package was generated.",
+      "best_candidate": "v26_len21_pool25_count_only_alpha0.4",
+      "best_mean_exact_delta_vs_v17_5split": 0.001163,
+      "best_min_exact_delta_vs_v17_5split": 0.000811,
+      "approx_mean_delta_vs_v24_5split": 0.000119,
+      "artifacts": [
+        "our_solution/output/v26_post_v25_grid_5seed.json"
+      ]
     }
   ],
   "plans": [
@@ -378,7 +611,7 @@
       "name": "v19_plan",
       "created_at": "2026-06-17",
       "status": "planned_not_published",
-      "source": "GPT Pro review suggestion absorbed into docs/V19_PLAN.md",
+      "source": "AI review suggestion absorbed into docs/V19_PLAN.md",
       "baseline": "v17",
       "classification_decision": "reuse v8/v17 A1 by default; classification is probe-only",
       "recommendation_direction": "exact-length validation plus short-history count/Bayes tail rerank with top1 frozen",
@@ -389,10 +622,25 @@
         "v19c_zero_bayes_shrink_alpha03",
         "v19d_combo_b_plus_c"
       ],
-      "target_lengths": [3, 1],
-      "do_not_touch_initially": ["seq_len=2", "seq_len>=4", "classification"],
+      "target_lengths": [
+        3,
+        1
+      ],
+      "do_not_touch_initially": [
+        "seq_len=2",
+        "seq_len>=4",
+        "classification"
+      ],
       "required_validation": {
-        "seeds": [42, 43, 44, 45, 46, 47, 48],
+        "seeds": [
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48
+        ],
         "compare_against": "v17",
         "mean_exact_weighted_delta_min": 0.0012,
         "min_exact_weighted_delta_min": 0.0005,
@@ -403,7 +651,7 @@
       },
       "docs": [
         "docs/V19_PLAN.md",
-        "docs/GPT_PRO_REVIEW.md",
+        "docs/AI_REVIEW.md",
         "分数记录.md",
         "上下文维护.md"
       ]

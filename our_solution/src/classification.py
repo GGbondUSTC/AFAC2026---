@@ -190,6 +190,47 @@ def predict_label_propagation_with_model_fallback(
     return pred, stats
 
 
+def predict_label_propagation_pair_gate(
+    data: GraphData,
+    source_idx: np.ndarray,
+    predict_idx: np.ndarray,
+    config: Dict[str, Any],
+    seed: int,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    base_config = dict(config["base_config"])
+    alt_config = dict(config["alt_config"])
+    base_pred, base_stats = predict_label_propagation_with_model_fallback(
+        data, source_idx, predict_idx, base_config, seed
+    )
+    alt_pred, alt_stats = predict_label_propagation_with_model_fallback(
+        data, source_idx, predict_idx, alt_config, seed
+    )
+    allowed_pairs = {tuple(int(x) for x in pair) for pair in config.get("allowed_pairs", ())}
+    replace_mask = np.array(
+        [(int(base), int(alt)) in allowed_pairs for base, alt in zip(base_pred, alt_pred)],
+        dtype=bool,
+    )
+    pred = base_pred.copy()
+    pred[replace_mask] = alt_pred[replace_mask]
+
+    pair_counts: Dict[str, int] = {}
+    for base, alt, replaced in zip(base_pred, alt_pred, replace_mask):
+        if replaced:
+            key = f"{int(base)}->{int(alt)}"
+            pair_counts[key] = pair_counts.get(key, 0) + 1
+
+    stats = {
+        "base_config": base_config.get("name", ""),
+        "alt_config": alt_config.get("name", ""),
+        "allowed_pairs": [f"{int(a)}->{int(b)}" for a, b in sorted(allowed_pairs)],
+        "changed_rows": int(replace_mask.sum()),
+        "pair_counts": pair_counts,
+        "base_stats": base_stats,
+        "alt_stats": alt_stats,
+    }
+    return pred, stats
+
+
 def degree_features(adj: csr_matrix) -> csr_matrix:
     out_degree = np.asarray(adj.sum(axis=1)).ravel()
     in_degree = np.asarray(adj.sum(axis=0)).ravel()
@@ -267,13 +308,67 @@ def make_model(config: Dict[str, Any], seed: int):
 def candidate_configs() -> List[Dict[str, Any]]:
     return [
         {
-            "name": "v11_label_prop_prior_beta_m025_zero_ridge",
+            "name": "v21_pair_gated_beta_m010_safe_pairs",
+            "model": "label_prop_pair_gate",
+            "base_config": {
+                "name": "v7_label_prop_zero_ridge_attr_1hop_alpha04_nobal",
+                "model": "label_prop_fallback_model",
+                "lp_steps": 5,
+                "lp_alpha": 0.95,
+                "symmetrize": True,
+                "add_self_loop": True,
+                "fallback": "class_prior",
+                "fallback_model_config": {
+                    "name": "ridge_attr_1hop_nobal",
+                    "model": "ridge",
+                    "alpha": 0.4,
+                    "feature_hops": 1,
+                    "use_label_prop": False,
+                    "use_degree": True,
+                    "symmetrize": True,
+                    "class_weight": None,
+                },
+            },
+            "alt_config": {
+                "name": "lp5_a095_beta_m010_zero_ridge04",
+                "model": "label_prop_fallback_model",
+                "lp_steps": 5,
+                "lp_alpha": 0.95,
+                "symmetrize": True,
+                "add_self_loop": True,
+                "class_prior_beta": -0.10,
+                "fallback": "class_prior",
+                "fallback_model_config": {
+                    "name": "ridge_attr_1hop_nobal",
+                    "model": "ridge",
+                    "alpha": 0.4,
+                    "feature_hops": 1,
+                    "use_label_prop": False,
+                    "use_degree": True,
+                    "symmetrize": True,
+                    "class_weight": None,
+                },
+            },
+            "allowed_pairs": (
+                (4, 9),
+                (5, 9),
+                (4, 0),
+                (1, 7),
+                (4, 7),
+                (4, 5),
+                (1, 2),
+                (4, 6),
+                (1, 5),
+                (8, 3),
+            ),
+        },
+        {
+            "name": "v7_label_prop_zero_ridge_attr_1hop_alpha04_nobal",
             "model": "label_prop_fallback_model",
             "lp_steps": 5,
             "lp_alpha": 0.95,
             "symmetrize": True,
             "add_self_loop": True,
-            "class_prior_beta": -0.25,
             "fallback": "class_prior",
             "fallback_model_config": {
                 "name": "ridge_attr_1hop_nobal",
@@ -287,12 +382,13 @@ def candidate_configs() -> List[Dict[str, Any]]:
             },
         },
         {
-            "name": "v7_label_prop_zero_ridge_attr_1hop_alpha04_nobal",
+            "name": "v11_label_prop_prior_beta_m025_zero_ridge",
             "model": "label_prop_fallback_model",
             "lp_steps": 5,
             "lp_alpha": 0.95,
             "symmetrize": True,
             "add_self_loop": True,
+            "class_prior_beta": -0.25,
             "fallback": "class_prior",
             "fallback_model_config": {
                 "name": "ridge_attr_1hop_nobal",
@@ -451,6 +547,10 @@ def run_classification(
             pred, model_feedback = predict_label_propagation_with_model_fallback(
                 data, fit_idx, val_idx, config, seed + round_id
             )
+        elif config.get("model") == "label_prop_pair_gate":
+            pred, model_feedback = predict_label_propagation_pair_gate(
+                data, fit_idx, val_idx, config, seed + round_id
+            )
         else:
             x = build_features(data, source_idx=fit_idx, config=config)
             model = make_model(config, seed + round_id)
@@ -483,6 +583,11 @@ def run_classification(
         test_pred = test_pred.astype(int)
     elif final_config.get("model") == "label_prop_fallback_model":
         test_pred, final_stats = predict_label_propagation_with_model_fallback(
+            data, data.train_idx, data.test_idx, final_config, seed + 10_000
+        )
+        test_pred = test_pred.astype(int)
+    elif final_config.get("model") == "label_prop_pair_gate":
+        test_pred, final_stats = predict_label_propagation_pair_gate(
             data, data.train_idx, data.test_idx, final_config, seed + 10_000
         )
         test_pred = test_pred.astype(int)

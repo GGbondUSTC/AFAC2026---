@@ -23,6 +23,7 @@ from .common import Timer, Trajectory, ensure_dir, ndcg_at_k, write_json
 
 
 LENGTH_BINS = ("<=3", "4-10", "11-30", "31-80", ">80")
+EXACT_LENGTH_BINS = ("0", "1", "2", "3", "4-10", ">10")
 
 
 def parse_sequence(value: Any) -> List[str]:
@@ -56,6 +57,16 @@ def length_bin(length: int) -> str:
     return ">80"
 
 
+def exact_length_bin(length: int) -> str:
+    if length <= 0:
+        return "0"
+    if length <= 3:
+        return str(length)
+    if length <= 10:
+        return "4-10"
+    return ">10"
+
+
 def recommendation_split(train_df: pd.DataFrame, val_ratio: float, seed: int) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Target-stratified split without requiring sklearn."""
     rng = np.random.default_rng(seed)
@@ -77,6 +88,17 @@ def test_bin_weights(test_df: pd.DataFrame, seq_col: str = "item_seq_raw") -> Di
     bins = lengths.map(length_bin)
     counts = bins.value_counts(normalize=True).to_dict()
     return {b: float(counts.get(b, 0.0)) for b in LENGTH_BINS}
+
+
+def test_exact_len_weights(test_df: pd.DataFrame, seq_col: str = "item_seq_raw") -> Dict[str, float]:
+    lengths = (
+        test_df[seq_col].map(lambda x: len(parse_sequence(x)))
+        if seq_col in test_df.columns
+        else pd.Series([0] * len(test_df))
+    )
+    bins = lengths.map(exact_length_bin)
+    counts = bins.value_counts(normalize=True).to_dict()
+    return {b: float(counts.get(b, 0.0)) for b in EXACT_LENGTH_BINS}
 
 
 def masked_history_eval(
@@ -144,6 +166,26 @@ def score_by_bin(predictions: Sequence[Sequence[str]], targets: Sequence[str], b
 
 def weighted_bin_score(by_bin: Dict[str, float], weights: Dict[str, float]) -> float:
     return float(sum(by_bin.get(b, 0.0) * weights.get(b, 0.0) for b in LENGTH_BINS))
+
+
+def score_by_exact_len(
+    predictions: Sequence[Sequence[str]],
+    targets: Sequence[str],
+    bins: Sequence[str],
+) -> Dict[str, float]:
+    scores: DefaultDict[str, List[float]] = defaultdict(list)
+    for pred, target, bin_name in zip(predictions, targets, bins):
+        value = 0.0
+        for rank, iid in enumerate(pred[:10], start=1):
+            if iid == target:
+                value = 1.0 / math.log2(rank + 1)
+                break
+        scores[str(bin_name)].append(value)
+    return {b: float(np.mean(scores[b])) if scores.get(b) else 0.0 for b in EXACT_LENGTH_BINS}
+
+
+def weighted_exact_score(by_bin: Dict[str, float], weights: Dict[str, float]) -> float:
+    return float(sum(by_bin.get(b, 0.0) * weights.get(b, 0.0) for b in EXACT_LENGTH_BINS))
 
 
 def rank_fusion_topk(
@@ -1198,6 +1240,267 @@ class LengthAwareHybridRecommender:
         )
 
 
+@dataclass
+class SegmentBayesShortRerankRecommender:
+    """v19 probe: freeze v17 top1 and rerank only selected short-history tails."""
+
+    config: Dict[str, Any]
+    candidates: List[str]
+    user_df: pd.DataFrame
+    item_df: pd.DataFrame
+
+    def __post_init__(self) -> None:
+        base_config = dict(self.config.get("base_config") or v17_conservative_shortseq_config())
+        self.base_model = build_recommender(base_config, self.candidates, self.user_df, self.item_df)
+        self.user_lookup = self.user_df.set_index("uid") if "uid" in self.user_df.columns else pd.DataFrame()
+        self.target_lengths = {int(x) for x in self.config.get("target_lengths", (3,))}
+        self.freeze_top_n = int(self.config.get("freeze_top_n", 1))
+        self.base_rank_weight = float(self.config.get("base_rank_weight", 1.0))
+        self.min_count = int(self.config.get("min_count", 8))
+        self.min_group_count = int(self.config.get("min_group_count", 12))
+        self.shrink_beta = float(self.config.get("shrink_beta", 60.0))
+        self.min_lift = float(self.config.get("min_lift", 1.02))
+        self.prior_pool = int(self.config.get("prior_pool", 80))
+        self.alpha_by_len = {int(k): float(v) for k, v in self.config.get("alpha_by_len", {}).items()}
+        self.component_weights = {
+            "last": 0.8,
+            "suffix": 0.35,
+            "last_group": 1.0,
+            "suffix_group": 0.75,
+            **dict(self.config.get("component_weights", {})),
+        }
+        raw_group_specs = self.config.get(
+            "group_specs",
+            (
+                ("u_cat_01", "u_cat_02"),
+                ("u_cat_01", "u_cat_06"),
+                ("u_cat_02", "u_cat_06"),
+            ),
+        )
+        self.group_specs = tuple(tuple(cols) for cols in raw_group_specs)
+        self.suffix_orders = tuple(int(x) for x in self.config.get("suffix_orders", (2,)))
+        self.global_counts: Counter = Counter()
+        self.last_counts: DefaultDict[str, Counter] = defaultdict(Counter)
+        self.suffix_counts: Dict[int, DefaultDict[Tuple[str, ...], Counter]] = {
+            order: defaultdict(Counter) for order in self.suffix_orders
+        }
+        self.last_group_counts: Dict[Tuple[str, ...], DefaultDict[Tuple[Tuple[str, ...], str], Counter]] = {
+            cols: defaultdict(Counter) for cols in self.group_specs
+        }
+        self.suffix_group_counts: Dict[
+            Tuple[str, ...],
+            Dict[int, DefaultDict[Tuple[Tuple[str, ...], Tuple[str, ...]], Counter]],
+        ] = {
+            cols: {order: defaultdict(Counter) for order in self.suffix_orders}
+            for cols in self.group_specs
+        }
+        self.global_total = 0
+        self.candidate_set = set(self.candidates)
+
+    def fit(self, train_df: pd.DataFrame) -> "SegmentBayesShortRerankRecommender":
+        self.base_model.fit(train_df)
+        for row in train_df.itertuples(index=False):
+            row_dict = row._asdict()
+            target = str(row_dict["target_iid"])
+            if target not in self.candidate_set:
+                continue
+            uid = str(row_dict.get("uid", ""))
+            hist = parse_sequence(row_dict.get("item_seq_raw", ""))
+            self.global_counts[target] += 1
+            self.global_total += 1
+            if not hist:
+                continue
+            last_item = hist[-1]
+            self.last_counts[last_item][target] += 1
+            for order in self.suffix_orders:
+                if len(hist) >= order:
+                    self.suffix_counts[order][tuple(hist[-order:])][target] += 1
+            user_row = self._user_row(uid)
+            if user_row is None:
+                continue
+            for cols in self.group_specs:
+                group_key = self._group_key(user_row, cols)
+                if not group_key:
+                    continue
+                self.last_group_counts[cols][(group_key, last_item)][target] += 1
+                for order in self.suffix_orders:
+                    if len(hist) >= order:
+                        suffix = tuple(hist[-order:])
+                        self.suffix_group_counts[cols][order][(suffix, group_key)][target] += 1
+        return self
+
+    def _user_row(self, uid: str) -> Optional[pd.Series]:
+        if self.user_lookup.empty or uid not in self.user_lookup.index:
+            return None
+        row = self.user_lookup.loc[uid]
+        if isinstance(row, pd.DataFrame):
+            return row.iloc[0]
+        return row
+
+    def _group_key(self, user_row: pd.Series, cols: Tuple[str, ...]) -> Tuple[str, ...]:
+        if not all(col in user_row.index and pd.notna(user_row[col]) for col in cols):
+            return ()
+        return tuple(str(user_row[col]) for col in cols)
+
+    def _global_prob(self, iid: str) -> float:
+        smooth = float(self.config.get("global_smooth", 1.0))
+        return (float(self.global_counts.get(iid, 0)) + smooth) / (
+            float(self.global_total) + smooth * max(1, len(self.candidates))
+        )
+
+    def _add_counter_scores(
+        self,
+        scores: Dict[str, float],
+        counter: Optional[Counter],
+        allowed: set[str],
+        alpha: float,
+        component: str,
+        min_total: int,
+    ) -> None:
+        if not counter:
+            return
+        total = float(sum(counter.values()))
+        if total < min_total:
+            return
+        scale = alpha * float(self.component_weights.get(component, 1.0))
+        if scale <= 0:
+            return
+        for iid, count in counter.most_common(self.prior_pool):
+            if iid not in allowed:
+                continue
+            global_prob = self._global_prob(iid)
+            posterior = (float(count) + self.shrink_beta * global_prob) / (total + self.shrink_beta)
+            lift = posterior / max(global_prob, 1e-12)
+            if lift >= self.min_lift:
+                scores[iid] = scores.get(iid, 0.0) + scale * math.log(lift)
+
+    def _prior_scores(self, row: pd.Series, hist: List[str], allowed: set[str], alpha: float) -> Dict[str, float]:
+        scores: Dict[str, float] = {}
+        if not hist:
+            return scores
+        last_item = hist[-1]
+        self._add_counter_scores(
+            scores, self.last_counts.get(last_item), allowed, alpha, "last", self.min_count
+        )
+        for order in self.suffix_orders:
+            if len(hist) >= order:
+                suffix = tuple(hist[-order:])
+                self._add_counter_scores(
+                    scores, self.suffix_counts[order].get(suffix), allowed, alpha, "suffix", self.min_count
+                )
+        user_row = self._user_row(str(row.get("uid", "")))
+        if user_row is None:
+            return scores
+        for cols in self.group_specs:
+            group_key = self._group_key(user_row, cols)
+            if not group_key:
+                continue
+            self._add_counter_scores(
+                scores,
+                self.last_group_counts[cols].get((group_key, last_item)),
+                allowed,
+                alpha,
+                "last_group",
+                self.min_group_count,
+            )
+            for order in self.suffix_orders:
+                if len(hist) >= order:
+                    suffix = tuple(hist[-order:])
+                    self._add_counter_scores(
+                        scores,
+                        self.suffix_group_counts[cols][order].get((suffix, group_key)),
+                        allowed,
+                        alpha,
+                        "suffix_group",
+                        self.min_group_count,
+                    )
+        return scores
+
+    def predict_row(self, row: pd.Series, k: int = 10) -> List[str]:
+        hist = parse_sequence(row.get("item_seq_raw", ""))
+        raw_len = len(hist)
+        base_items = self.base_model.predict_row(row, k=k)
+        if raw_len not in self.target_lengths:
+            return base_items[:k]
+        if len(base_items) <= self.freeze_top_n:
+            return base_items[:k]
+        alpha = float(self.alpha_by_len.get(raw_len, self.config.get("alpha", 0.04)))
+        if alpha <= 0:
+            return base_items[:k]
+        frozen = base_items[: self.freeze_top_n]
+        tail = base_items[self.freeze_top_n : k]
+        allowed = set(tail)
+        scores: Dict[str, float] = {}
+        for rank, iid in enumerate(tail, start=self.freeze_top_n + 1):
+            scores[iid] = self.base_rank_weight / math.log2(rank + 1)
+        for iid, value in self._prior_scores(row, hist, allowed, alpha).items():
+            scores[iid] = scores.get(iid, 0.0) + value
+        ordered_tail = sorted(tail, key=lambda iid: (-scores.get(iid, 0.0), tail.index(iid), iid))
+        return (frozen + ordered_tail)[:k]
+
+
+@dataclass
+class LongHistoryCountRerankRecommender:
+    """v22 probe: freeze top1 and rerank long-history tails by in-history frequency/recency."""
+
+    config: Dict[str, Any]
+    candidates: List[str]
+    user_df: pd.DataFrame
+    item_df: pd.DataFrame
+
+    def __post_init__(self) -> None:
+        base_config = dict(self.config.get("base_config") or v17_conservative_shortseq_config())
+        self.base_model = build_recommender(base_config, self.candidates, self.user_df, self.item_df)
+
+    def fit(self, train_df: pd.DataFrame) -> "LongHistoryCountRerankRecommender":
+        self.base_model.fit(train_df)
+        return self
+
+    def predict_row(self, row: pd.Series, k: int = 10) -> List[str]:
+        base_pool = max(k, int(self.config.get("base_pool", 20)))
+        base_items = self.base_model.predict_row(row, k=base_pool)
+        hist = parse_sequence(row.get("item_seq_raw", ""))
+        if len(hist) < int(self.config.get("min_len", 31)):
+            return base_items[:k]
+        freeze_top_n = int(self.config.get("freeze_top_n", 1))
+        if len(base_items) <= freeze_top_n:
+            return base_items[:k]
+
+        counts: Dict[str, int] = {}
+        recency: Dict[str, int] = {}
+        for pos, iid in enumerate(hist):
+            counts[iid] = counts.get(iid, 0) + 1
+            recency[iid] = pos
+        if not counts:
+            return base_items[:k]
+
+        max_count = max(counts.values())
+        hist_len = max(1, len(hist))
+        alpha = float(self.config.get("alpha", 0.10))
+        count_weight = float(self.config.get("count_weight", 0.8))
+        recency_weight = float(self.config.get("recency_weight", 0.4))
+        last_weight = float(self.config.get("last_weight", 0.1))
+        base_rank_weight = float(self.config.get("base_rank_weight", 1.0))
+
+        frozen = base_items[:freeze_top_n]
+        tail = base_items[freeze_top_n:base_pool]
+        scores: Dict[str, float] = {}
+        for rank, iid in enumerate(tail, start=freeze_top_n + 1):
+            scores[iid] = base_rank_weight / math.log2(rank + 1)
+            if iid not in counts:
+                continue
+            count_feature = math.log1p(counts[iid]) / math.log1p(max_count)
+            recency_feature = (recency[iid] + 1) / hist_len
+            last_feature = 1.0 if iid == hist[-1] else 0.0
+            scores[iid] += alpha * (
+                count_weight * count_feature
+                + recency_weight * recency_feature
+                + last_weight * last_feature
+            )
+        ordered_tail = sorted(tail, key=lambda iid: (-scores.get(iid, 0.0), tail.index(iid), iid))
+        return (frozen + ordered_tail)[:k]
+
+
 def v1_reference_config() -> Dict[str, Any]:
     return {
         "name": "v1_raw_transition_repeat_reference",
@@ -1469,6 +1772,100 @@ def v17_conservative_shortseq_config() -> Dict[str, Any]:
     return config
 
 
+def v19a_short_len3_only_alpha04_config() -> Dict[str, Any]:
+    return {
+        "name": "v19a_short_len3_only_alpha04",
+        "model": "segment_bayes_short_rerank",
+        "base_config": v17_conservative_shortseq_config(),
+        "target_lengths": (3,),
+        "freeze_top_n": 1,
+        "alpha": 0.04,
+        "alpha_by_len": {3: 0.04},
+        "base_rank_weight": 1.0,
+        "min_count": 8,
+        "min_group_count": 12,
+        "shrink_beta": 60.0,
+        "min_lift": 1.02,
+        "prior_pool": 80,
+        "suffix_orders": (2,),
+        "group_specs": (
+            ("u_cat_01", "u_cat_02"),
+            ("u_cat_01", "u_cat_06"),
+            ("u_cat_02", "u_cat_06"),
+        ),
+        "component_weights": {
+            "last": 0.8,
+            "suffix": 0.35,
+            "last_group": 1.0,
+            "suffix_group": 0.75,
+        },
+    }
+
+
+def v19b_short_len1_3_alpha035_050_config() -> Dict[str, Any]:
+    config = v19a_short_len3_only_alpha04_config()
+    config.update(
+        {
+            "name": "v19b_short_len1_3_alpha035_050",
+            "target_lengths": (1, 3),
+            "alpha_by_len": {1: 0.035, 3: 0.05},
+        }
+    )
+    return config
+
+
+def v22_long_history_count_recent_config() -> Dict[str, Any]:
+    return {
+        "name": "v22_long_history_count_recent_len31",
+        "model": "long_history_count_rerank",
+        "base_config": v17_conservative_shortseq_config(),
+        "min_len": 31,
+        "freeze_top_n": 1,
+        "base_pool": 20,
+        "base_rank_weight": 1.0,
+        "alpha": 0.10,
+        "count_weight": 0.8,
+        "recency_weight": 0.4,
+        "last_weight": 0.1,
+    }
+
+
+def v23_long_history_count_recent_strong_config() -> Dict[str, Any]:
+    config = v22_long_history_count_recent_config()
+    config.update(
+        {
+            "name": "v23_long_history_count_recent_len31_alpha20",
+            "alpha": 0.20,
+        }
+    )
+    return config
+
+
+def v24_medium_long_history_count_recent_strong_config() -> Dict[str, Any]:
+    config = v22_long_history_count_recent_config()
+    config.update(
+        {
+            "name": "v24_medium_long_history_count_recent_len21_alpha25",
+            "min_len": 21,
+            "alpha": 0.25,
+        }
+    )
+    return config
+
+
+def v25_medium_long_history_pool25_config() -> Dict[str, Any]:
+    config = v22_long_history_count_recent_config()
+    config.update(
+        {
+            "name": "v25_medium_long_history_count_recent_len21_pool25_alpha32",
+            "min_len": 21,
+            "base_pool": 25,
+            "alpha": 0.32,
+        }
+    )
+    return config
+
+
 def candidate_configs() -> List[Dict[str, Any]]:
     configs = [
         v1_reference_config(),
@@ -1651,6 +2048,10 @@ def candidate_configs() -> List[Dict[str, Any]]:
         # masked validation but failed official A-board validation.
         configs.insert(13, v16_neural_zero_dropout35_config())
         configs.insert(14, v17_conservative_shortseq_config())
+        configs.insert(0, v22_long_history_count_recent_config())
+        configs.insert(0, v23_long_history_count_recent_strong_config())
+        configs.insert(0, v25_medium_long_history_pool25_config())
+        configs.insert(0, v24_medium_long_history_count_recent_strong_config())
     return configs
 
 
@@ -1663,6 +2064,10 @@ def build_recommender(config: Dict[str, Any], candidates: List[str], user_df: pd
         return NeuralZeroUserFusionRecommender(config=config, candidates=candidates, user_df=user_df, item_df=item_df)
     if config.get("model") == "length_aware":
         return LengthAwareHybridRecommender(config=config, candidates=candidates, user_df=user_df, item_df=item_df)
+    if config.get("model") == "segment_bayes_short_rerank":
+        return SegmentBayesShortRerankRecommender(config=config, candidates=candidates, user_df=user_df, item_df=item_df)
+    if config.get("model") == "long_history_count_rerank":
+        return LongHistoryCountRerankRecommender(config=config, candidates=candidates, user_df=user_df, item_df=item_df)
     return HybridRecommender(config=config, candidates=candidates, user_df=user_df, item_df=item_df)
 
 

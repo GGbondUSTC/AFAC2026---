@@ -2,20 +2,20 @@
 
 This repository contains an iterative solution for AFAC2026 Challenge Group, Problem 3: sparse-feedback automated experiments.
 
-The public GitHub version is intended for code review and strategy analysis. It excludes local competition data, API keys, generated submissions, model checkpoints, and large runtime outputs.
+The GitHub version is intended for code review, strategy analysis, and data-first investigation. It includes the A-board raw data under `A分类/` and `A推荐/`, while still excluding API keys, generated submissions, model checkpoints, and large runtime outputs.
 
 ## Current Status
 
-- Official A-board best: `v17`
-- Total score: `0.6266`
-- Classification score: `0.7586`
-- Recommendation score: `0.4947`
-- Rank at report time: `25`
-- Current root submission on the local machine: `prediction.zip` from `v17` (ignored by Git)
+- Official A-board best: `v24`
+- Total score: `0.6276`
+- Classification score: `0.7590`
+- Recommendation score: `0.4962`
+- Rank at report time: `27`
+- Current root submission on the local machine: `prediction.zip` from `v24` (ignored by Git)
 
-Recent diagnosis: `v18_probe` tested stronger short-history rerank and zero-history 5-seed neural ensembles, but multi-split validation was not robust enough. It was not submitted and did not replace `v17`.
+Recent diagnosis: `v25` improved internal validation slightly by expanding the medium/long-history rerank pool, but its official A-board score tied `v24` exactly at `0.7590 / 0.4962 / 0.6276`. The root submission was rolled back to `v24`.
 
-Current v19 plan: upgrade validation to exact-length multi-split evaluation, then test a short-history count/Bayes tail reranker with `top1` frozen. See `docs/V19_PLAN.md`.
+Current direction: stop spending submissions on tiny rerank deltas around `+0.0001`; use the now-tracked raw data to audit split mismatch, length buckets, item/user feature interactions, and data-derived signals that could produce a larger recommendation gain. See `docs/DATA_FIRST_IMPROVEMENT_PLAN.md` and `docs/AI_REVIEW.md`.
 
 ## Repository Layout
 
@@ -37,15 +37,19 @@ versions/
 赛题.md                     Competition/task description
 进阶教程.md                 Advanced tutorial notes
 AGENTS.md                   Contributor guide
-docs/GPT_PRO_REVIEW.md      Suggested prompt/context for GPT Pro review
-docs/V19_PLAN.md            Current v19 improvement plan
+docs/AI_REVIEW.md           AI-agnostic review brief for external model review
+docs/DATA_FIRST_IMPROVEMENT_PLAN.md
+                            Current data-first improvement plan
+docs/V19_PLAN.md            Historical v19 plan and failed-probe context
 ```
 
-Ignored local-only paths include `A分类/`, `A推荐/`, `prediction.zip`, `our_solution/output*/`, versioned submission CSV/zip files, `.env`, and baseline bundled data/output.
+Tracked data paths include `A分类/A1.npz`, `A分类/sample_submission.csv`, and all A-board recommendation files under `A推荐/`.
+
+Ignored local-only paths include `prediction.zip`, `LATEST_VERSION.txt`, `our_solution/output*/`, versioned submission CSV/zip files, `.env`, checkpoints, logs, caches, and baseline bundled data/output.
 
 ## Reproducing Locally
 
-Place local A-board data in the original structure:
+The A-board data is tracked in the repository. The expected structure is:
 
 ```text
 A分类/A1.npz
@@ -59,7 +63,7 @@ A推荐/item.csv
 Run syntax checks:
 
 ```powershell
-python -m py_compile .\our_solution\run.py .\our_solution\src\classification.py .\our_solution\src\recommendation.py
+python -m py_compile .\our_solution\run.py .\our_solution\src\classification.py .\our_solution\src\recommendation.py .\our_solution\src\validation.py
 ```
 
 Run both tasks:
@@ -73,7 +77,7 @@ Run recommendation only while reusing the current best classification:
 ```powershell
 python .\our_solution\run.py `
   --task 2 `
-  --reuse_a1 .\versions\v8\submission\A1.csv `
+  --reuse_a1 .\versions\v24\submission\A1.csv `
   --budget 15 `
   --seed 42 `
   --version vN `
@@ -99,13 +103,15 @@ For GitHub, generated submission files are intentionally ignored. Use `versions/
 
 ## Review Priorities
 
-The main open problem is recommendation improvement. Classification has been stable at `0.7586`; the internally better v11/v12 classification variant transferred worse online.
+The main open problem is recommendation improvement. Classification is currently `0.7590`; larger remaining gap is recommendation (`0.4962` versus known leader reference `0.50639`).
 
 Recommended review starting points:
 
-1. `docs/GPT_PRO_REVIEW.md`
-2. `docs/V19_PLAN.md`
+1. `docs/AI_REVIEW.md`
+2. `docs/DATA_FIRST_IMPROVEMENT_PLAN.md`
 3. `分数记录.md`
 4. `versions/VERSION_INDEX.json`
 5. `our_solution/src/recommendation.py`
 6. `our_solution/src/classification.py`
+7. `A推荐/train.csv`, `A推荐/test.csv`, `A推荐/user.csv`, `A推荐/item.csv`
+8. `A分类/A1.npz`

@@ -1,13 +1,16 @@
 # 自有方案：稀疏反馈自动实验控制
 
-本方案基于 baseline 的工程目标重新实现，但不复用其 PyTorch dense GNN / GRU4Rec 训练核心。设计原则是轻量、串行、可复现、可审计。
+本方案基于 baseline 的工程目标重新实现，并在多轮 A 榜反馈后形成当前主链路。设计原则是串行、可复现、可审计，并把每次提交结果落到版本台账。
+
+当前官方 A 榜最佳为 `v24`：总分 `0.6276`，分类 `0.7590`，推荐 `0.4962`。`v25` 已提交但与 `v24` 持平，默认候选已恢复为 `v24`。
 
 ## 核心差异
 
 - 不依赖外部 LLM 或未备案服务，默认离线可运行。
-- 不依赖 PyTorch，避免复现环境缺少 GPU 或 torch 时失败。
-- 分类任务使用稀疏特征工程 + 线性模型搜索，自动适配 A/B 榜不同特征维度和类别数。
-- 推荐任务使用可解释混合排序器：全局目标热度、历史 item 到目标 item 的转移、重复购买倾向、用户匿名特征分组和 item 匿名特征先验。
+- 基础链路不强依赖 PyTorch；如果本地存在 PyTorch，则启用零历史用户神经塔和后续推荐候选。
+- 分类任务使用图平滑、label propagation、Ridge fallback，并在 `v21` 通过少量高置信 pair-gate 改动提升到官方 `0.7590`。
+- 推荐任务使用可解释混合排序器：全局目标热度、历史 item 到目标 item 的转移、重复购买倾向、用户匿名特征分组、item 匿名特征先验、零历史神经融合和中长历史尾部重排。
+- 当前默认推荐候选为 `v24_medium_long_history_count_recent_len21_alpha25`，`v25` 保留用于复现同分提交。
 - 每个候选配置都进行内部验证，真实记录配置、反馈、下一步策略和耗时，输出 `trajectory_B1.json` / `trajectory_B2.json`。
 
 ## 运行方式
@@ -76,15 +79,35 @@ our_solution/output/
    - 历史重复倾向；
    - 用户匿名类别特征分组统计；
    - item 匿名类别特征先验；
-   - 是否排除历史 item。
+   - 是否排除历史 item；
+   - 零历史用户 PyTorch 用户特征神经塔；
+   - 短历史保守 rerank；
+   - `seq_len>=21` 中长历史 top1-frozen tail rerank。
 3. 根据 NDCG@10 选择最佳配置。
 4. 用全部训练集重建排序器并生成 `A2.csv`。
+
+## 验证与探针工具
+
+```text
+our_solution/src/validation.py
+our_solution/tools/v19_multisplit_eval.py
+our_solution/tools/v19_grid_eval.py
+our_solution/tools/v23_long_history_grid_eval.py
+our_solution/tools/classification_grid_eval.py
+```
+
+当前经验：
+
+- 短历史神经塔和 v19 count/Bayes rerank 离线不稳，不作为默认提交主线。
+- `v24` 中长历史尾部重排已经线上转化。
+- `v25` 和 v26 级别的微小离线增益没有可见线上转化，后续优先做数据分布审计。
 
 ## 已知取舍
 
 - 该方案优先保证稳健和可复现，不追求复杂深度模型。
 - 推荐任务中训练目标 item 覆盖范围可能远小于候选集，混合排序器会自然偏向训练目标分布，并用 item 特征先验补足候选排序。
 - 若复赛数据中目标分布更均匀，可以扩大 `candidate_configs()` 中的 user/item 特征权重搜索空间。
+- A 榜后续提分应先看 `docs/DATA_FIRST_IMPROVEMENT_PLAN.md`，不要直接提交只有 `+0.0001` 量级的本地 rerank 微调。
 
 ## Qwen API
 
