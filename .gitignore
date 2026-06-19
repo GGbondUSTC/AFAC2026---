@@ -14,11 +14,8 @@ __pycache__/
 venv/
 env/
 
-# Local competition data
-A分类/*
-!A分类/README.md
-A推荐/*
-!A推荐/README.md
+# A-board competition data is tracked intentionally so reviewers can run
+# data-first audits without reconstructing the local workspace.
 
 # Root-level submission artifacts
 prediction.zip

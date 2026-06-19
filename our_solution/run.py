@@ -74,6 +74,29 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Short human note describing what changed in this version.",
     )
+    parser.add_argument(
+        "--use_qwen_agent",
+        action="store_true",
+        help="Use Qwen API to propose extra locally validated candidate configs.",
+    )
+    parser.add_argument(
+        "--qwen_env",
+        type=Path,
+        default=Path(".env"),
+        help="Path to Qwen/DashScope .env or raw-key file.",
+    )
+    parser.add_argument(
+        "--qwen_model",
+        type=str,
+        default=None,
+        help="Optional Qwen model override. Defaults to QWEN_MODEL or qwen-plus.",
+    )
+    parser.add_argument(
+        "--qwen_rounds",
+        type=int,
+        default=3,
+        help="Extra Qwen-proposed configs per task when --use_qwen_agent is set.",
+    )
     return parser.parse_args()
 
 
@@ -171,6 +194,12 @@ def copy_reused_submission_file(reuse_path: Path, submission_dir: Path, filename
     shutil.copy2(reuse_path, submission_dir / filename)
 
 
+def resolve_qwen_env_path(path: Path, project_root: Path) -> Path:
+    if path.is_absolute() or path.exists():
+        return path
+    return project_root / path
+
+
 def archive_version(
     solution_dir: Path,
     output_dir: Path,
@@ -239,6 +268,10 @@ def archive_version(
             "seed": args.seed,
             "val_ratio": args.val_ratio,
             "time_limit": args.time_limit,
+            "use_qwen_agent": bool(args.use_qwen_agent),
+            "qwen_env": str(args.qwen_env),
+            "qwen_model": args.qwen_model,
+            "qwen_rounds": args.qwen_rounds,
         },
         "results": results,
     }
@@ -315,6 +348,9 @@ def main() -> None:
     if args.reuse_a2 and 2 in task_ids:
         raise ValueError("--reuse_a2 cannot be combined with running task 2.")
     solution_dir = Path(__file__).resolve().parent
+    project_root = solution_dir.parent
+    qwen_env_path = resolve_qwen_env_path(args.qwen_env, project_root)
+    args.qwen_env = qwen_env_path
     output_dir = ensure_dir(args.output_dir)
     reset_run_outputs(output_dir)
     submission_dir = reset_submission_dir(output_dir / "submission")
@@ -331,6 +367,10 @@ def main() -> None:
             seed=args.seed,
             val_ratio=args.val_ratio,
             time_limit=remaining,
+            use_qwen_agent=args.use_qwen_agent,
+            qwen_env_path=qwen_env_path,
+            qwen_model=args.qwen_model,
+            qwen_rounds=args.qwen_rounds,
         )
         traj = output_dir / "trajectory_B1.json"
         if traj.exists():
@@ -345,6 +385,10 @@ def main() -> None:
             seed=args.seed,
             val_ratio=args.val_ratio,
             time_limit=remaining,
+            use_qwen_agent=args.use_qwen_agent,
+            qwen_env_path=qwen_env_path,
+            qwen_model=args.qwen_model,
+            qwen_rounds=args.qwen_rounds,
         )
         traj = output_dir / "trajectory_B2.json"
         if traj.exists():
