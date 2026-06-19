@@ -34,10 +34,13 @@ from src.recommendation import (  # noqa: E402
     test_exact_len_weights,
     test_like_recommendation_split,
     v17_conservative_shortseq_config,
+    v24_medium_long_history_count_recent_strong_config,
     weighted_bin_score,
     weighted_exact_score,
 )
 from src.validation import compare_prediction_sets, exact_bins_for_frame, summarize_pairwise_results  # noqa: E402
+
+REPEAT_DECILE_BINS = tuple(f"r{idx * 10:02d}-{(idx + 1) * 10:02d}" for idx in range(10))
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,6 +49,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
     parser.add_argument("--val_ratio", type=float, default=0.12)
     parser.add_argument("--max_base_pool", type=int, default=50)
+    parser.add_argument(
+        "--baseline",
+        choices=["v17", "v24"],
+        default="v24",
+        help="Fitted baseline used for pairwise deltas.",
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -194,13 +203,22 @@ def row_infos(df: pd.DataFrame) -> List[Dict[str, Any]]:
         hist = parse_sequence(row.get("item_seq_raw", ""))
         counts = Counter(hist)
         recency = {iid: pos for pos, iid in enumerate(hist)}
+        hist_len = len(hist)
+        max_count = max(counts.values()) if counts else 0
+        unique_ratio = len(counts) / max(hist_len, 1)
+        repeat_ratio = 1.0 - unique_ratio if hist_len else 0.0
+        top_share = max_count / max(hist_len, 1)
         infos.append(
             {
                 "hist": hist,
                 "counts": counts,
                 "recency": recency,
-                "max_count": max(counts.values()) if counts else 0,
-                "hist_len": len(hist),
+                "max_count": max_count,
+                "hist_len": hist_len,
+                "unique_ratio": unique_ratio,
+                "repeat_ratio": repeat_ratio,
+                "top_share": top_share,
+                "last_count": counts.get(hist[-1], 0) if hist else 0,
             }
         )
     return infos
@@ -278,6 +296,30 @@ def changed_by_named_bins(
     }
 
 
+def repeat_decile_bin(info: Dict[str, Any]) -> str:
+    repeat_ratio = min(0.999999, max(0.0, float(info.get("repeat_ratio", 0.0))))
+    idx = int(repeat_ratio * 10)
+    return REPEAT_DECILE_BINS[idx]
+
+
+def changed_by_repeat_decile(
+    base_predictions: Sequence[Sequence[str]],
+    candidate_predictions: Sequence[Sequence[str]],
+    infos: Sequence[Dict[str, Any]],
+) -> Dict[str, int]:
+    changed = {name: 0 for name in REPEAT_DECILE_BINS}
+    top1 = {name: 0 for name in REPEAT_DECILE_BINS}
+    for base, cand, info in zip(base_predictions, candidate_predictions, infos):
+        name = repeat_decile_bin(info)
+        if list(base[:10]) != list(cand[:10]):
+            changed[name] += 1
+        if (list(base[:1]) or [""])[0] != (list(cand[:1]) or [""])[0]:
+            top1[name] += 1
+    return {f"{name}_changed": changed[name] for name in REPEAT_DECILE_BINS} | {
+        f"{name}_top1_changed": top1[name] for name in REPEAT_DECILE_BINS
+    }
+
+
 def evaluate_variant(
     variant: Dict[str, Any],
     seed: int,
@@ -321,6 +363,7 @@ def evaluate_variant(
         "masked_coarse_weighted_candidate": cand_coarse,
         "masked_coarse_weighted_delta": cand_coarse - base_coarse,
         "changed_by_coarse_bin": changed_by_named_bins([x[:10] for x in base_masked], masked_candidate, coarse_bins),
+        "changed_by_repeat_decile": changed_by_repeat_decile([x[:10] for x in base_masked], masked_candidate, masked_infos),
     }
 
 
@@ -358,13 +401,17 @@ def main() -> None:
     coarse_weights = test_bin_weights(test_df)
     all_results: Dict[str, List[Dict[str, Any]]] = {v["name"]: [] for v in variants}
     max_pool = max(int(args.max_base_pool), max(int(v["base_pool"]) for v in variants))
+    if args.baseline == "v24":
+        baseline_config = v24_medium_long_history_count_recent_strong_config()
+    else:
+        baseline_config = v17_conservative_shortseq_config()
 
     for seed in args.seeds:
         set_seed(seed)
         fit_df, val_df, masked_val_df, _ = test_like_recommendation_split(
             train_df, test_df, val_ratio=args.val_ratio, seed=seed
         )
-        base_model = build_recommender(v17_conservative_shortseq_config(), candidates, user_df, item_df).fit(fit_df)
+        base_model = build_recommender(baseline_config, candidates, user_df, item_df).fit(fit_df)
         base_val = [base_model.predict_row(row, k=max_pool) for _, row in val_df.iterrows()]
         base_masked = [base_model.predict_row(row, k=max_pool) for _, row in masked_val_df.iterrows()]
         val_infos = row_infos(val_df)
@@ -398,6 +445,8 @@ def main() -> None:
         "rec_data": str(args.rec_data),
         "seeds": list(args.seeds),
         "val_ratio": float(args.val_ratio),
+        "baseline": args.baseline,
+        "baseline_config": baseline_config,
         "exact_weights": exact_weights,
         "coarse_weights": coarse_weights,
         "variants": variants,

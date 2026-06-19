@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
@@ -19,6 +19,8 @@ from .recommendation import (
     weighted_exact_score,
 )
 
+REPEAT_CONCENTRATION_BINS = ("empty", "unique", "low", "medium", "high")
+
 
 def gain_at_k(prediction: Sequence[str], target: str, k: int = 10) -> float:
     for rank, iid in enumerate(prediction[:k], start=1):
@@ -33,6 +35,84 @@ def exact_bins_for_frame(df: pd.DataFrame) -> List[str]:
     else:
         lengths = df["item_seq_raw"].map(lambda x: len(parse_sequence(x))).tolist()
     return [exact_length_bin(int(length)) for length in lengths]
+
+
+def repeat_concentration_bin(hist: Sequence[str]) -> str:
+    hist_len = len(hist)
+    if hist_len <= 0:
+        return "empty"
+    counts = Counter(hist)
+    if len(counts) == hist_len:
+        return "unique"
+    repeat_ratio = 1.0 - (len(counts) / hist_len)
+    top_share = max(counts.values()) / hist_len
+    if repeat_ratio >= 0.60 or top_share >= 0.45:
+        return "high"
+    if repeat_ratio >= 0.30 or top_share >= 0.25:
+        return "medium"
+    return "low"
+
+
+def repeat_concentration_bins_for_frame(df: pd.DataFrame) -> List[str]:
+    return [
+        repeat_concentration_bin(parse_sequence(value))
+        for value in df.get("item_seq_raw", pd.Series([np.nan] * len(df))).tolist()
+    ]
+
+
+def compare_prediction_sets_by_bins(
+    base_predictions: Sequence[Sequence[str]],
+    candidate_predictions: Sequence[Sequence[str]],
+    targets: Sequence[str],
+    bins: Sequence[str],
+    bin_order: Sequence[str],
+) -> Dict[str, Dict[str, float]]:
+    base_scores: List[float] = []
+    candidate_scores: List[float] = []
+    rows: Dict[str, List[int]] = defaultdict(list)
+    changed: Dict[str, int] = defaultdict(int)
+    top1_changed: Dict[str, int] = defaultdict(int)
+    overlap: Dict[str, List[int]] = defaultdict(list)
+    for idx, (base, candidate, target, bin_name) in enumerate(
+        zip(base_predictions, candidate_predictions, targets, bins)
+    ):
+        base_top = list(base[:10])
+        candidate_top = list(candidate[:10])
+        base_scores.append(gain_at_k(base_top, str(target), k=10))
+        candidate_scores.append(gain_at_k(candidate_top, str(target), k=10))
+        rows[str(bin_name)].append(idx)
+        if base_top != candidate_top:
+            changed[str(bin_name)] += 1
+        if (base_top[:1] or [""])[0] != (candidate_top[:1] or [""])[0]:
+            top1_changed[str(bin_name)] += 1
+        overlap[str(bin_name)].append(len(set(base_top).intersection(candidate_top)))
+
+    by_bin: Dict[str, Dict[str, float]] = {}
+    for bin_name in bin_order:
+        idxs = rows.get(str(bin_name), [])
+        if not idxs:
+            by_bin[str(bin_name)] = {
+                "n": 0,
+                "base": 0.0,
+                "candidate": 0.0,
+                "delta": 0.0,
+                "changed_rows": 0,
+                "top1_changed": 0,
+                "top10_overlap_mean": 0.0,
+            }
+            continue
+        base_mean = float(np.mean([base_scores[i] for i in idxs]))
+        candidate_mean = float(np.mean([candidate_scores[i] for i in idxs]))
+        by_bin[str(bin_name)] = {
+            "n": int(len(idxs)),
+            "base": base_mean,
+            "candidate": candidate_mean,
+            "delta": candidate_mean - base_mean,
+            "changed_rows": int(changed.get(str(bin_name), 0)),
+            "top1_changed": int(top1_changed.get(str(bin_name), 0)),
+            "top10_overlap_mean": float(np.mean(overlap.get(str(bin_name), [0]))),
+        }
+    return by_bin
 
 
 def compare_prediction_sets(
@@ -140,6 +220,13 @@ def evaluate_pairwise_recommender(
     masked_targets = masked_val_df["target_iid"].astype(str).tolist()
     natural = compare_prediction_sets(val_base, val_candidate, val_targets, exact_bins_for_frame(val_df))
     masked = compare_prediction_sets(masked_base, masked_candidate, masked_targets, exact_bins_for_frame(masked_val_df))
+    masked_repeat = compare_prediction_sets_by_bins(
+        masked_base,
+        masked_candidate,
+        masked_targets,
+        repeat_concentration_bins_for_frame(masked_val_df),
+        REPEAT_CONCENTRATION_BINS,
+    )
 
     exact_weights = test_exact_len_weights(test_df)
     base_weighted = weighted_exact_score(
@@ -157,6 +244,7 @@ def evaluate_pairwise_recommender(
         "test_exact_len_weights": exact_weights,
         "natural": natural,
         "masked": masked,
+        "masked_by_repeat_concentration": masked_repeat,
         "masked_exact_weighted_base": base_weighted,
         "masked_exact_weighted_candidate": candidate_weighted,
         "masked_exact_weighted_delta": candidate_weighted - base_weighted,
@@ -189,6 +277,28 @@ def summarize_pairwise_results(results: Sequence[Dict[str, Any]]) -> Dict[str, A
             "max_top1_changed": float(np.max(top1_changed)) if top1_changed else 0.0,
         }
     summary["masked_by_exact_len_summary"] = by_bin
+    if results and "masked_by_repeat_concentration" in results[0]:
+        by_repeat: Dict[str, Dict[str, float]] = {}
+        for bin_name in REPEAT_CONCENTRATION_BINS:
+            values = [
+                float(r["masked_by_repeat_concentration"][bin_name]["delta"])
+                for r in results
+            ]
+            changed = [
+                float(r["masked_by_repeat_concentration"][bin_name]["changed_rows"])
+                for r in results
+            ]
+            top1_changed = [
+                float(r["masked_by_repeat_concentration"][bin_name]["top1_changed"])
+                for r in results
+            ]
+            by_repeat[bin_name] = {
+                "mean_delta": float(np.mean(values)) if values else 0.0,
+                "min_delta": float(np.min(values)) if values else 0.0,
+                "mean_changed_rows": float(np.mean(changed)) if changed else 0.0,
+                "max_top1_changed": float(np.max(top1_changed)) if top1_changed else 0.0,
+            }
+        summary["masked_by_repeat_concentration_summary"] = by_repeat
     return summary
 
 
@@ -201,7 +311,7 @@ def v19_guard(summary: Dict[str, Any]) -> Dict[str, Any]:
         "len2_unchanged": float(by_bin.get("2", {}).get("mean_changed_rows", 0.0)) == 0.0,
         "len4plus_unchanged": all(
             float(by_bin.get(bin_name, {}).get("mean_changed_rows", 0.0)) == 0.0
-            for bin_name in ("4-10", ">10")
+            for bin_name in ("4-10", "11-20", "21-30", "31-80", ">80")
         ),
         "top1_unchanged_short": all(
             float(by_bin.get(bin_name, {}).get("max_top1_changed", 0.0)) == 0.0

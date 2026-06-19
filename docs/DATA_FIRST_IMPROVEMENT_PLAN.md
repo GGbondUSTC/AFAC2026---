@@ -2,14 +2,16 @@
 
 ## Why This Is Now The Main Route
 
-The current official best is `v24`:
+The current official best is `v32`:
 
-- Total: `0.6276`
+- Total: `0.6278`
 - Classification: `0.7590`
-- Recommendation: `0.4962`
-- Rank at report time: `27`
+- Recommendation: `0.4966`
+- Rank at report time: not recorded
 
-`v25` improved internal recommendation metrics slightly but tied `v24` online. The post-v25 grid also found only about `+0.00012` versus `v24`, which is too small to justify another submission. The next useful step is data analysis, not more local rerank micro-tuning.
+The current local root `prediction.zip` is the verified `v32` package. `v33` and `v34` were submitted after it as long-history LightGBM blend probes, but both scored below v32; the root package was restored to v32.
+
+`v31` demonstrated that the current candidate pool has headroom: its seed-42 recall@80 was `0.963009` versus `0.903206` for the v29 reference. Its broad rerank nevertheless failed online. `v32` recovered a small official gain by using the same recall sources only for a conservative `>80` insert gate. The next useful step is to audit candidate quality and gate calibration, not to make another global or semi-free rerank.
 
 ## Current Hypothesis
 
@@ -18,8 +20,8 @@ The public score gap is more likely caused by validation/test distribution misma
 Focus on recommendation first:
 
 - Known leader recommendation reference: `0.50639`
-- Current recommendation: `0.4962`
-- Gap: `0.01019`
+- Current recommendation: `0.4966`
+- Gap: `0.00979`
 
 Classification is still worth probing, but only with small, high-confidence changes:
 
@@ -51,6 +53,10 @@ Generated predictions for comparison:
 ```text
 versions/v24/submission/A2.csv
 versions/v25/submission/A2.csv
+versions/v29/submission/A2.csv
+versions/v32/submission/A2.csv
+versions/v33/submission/A2.csv
+versions/v34/submission/A2.csv
 versions/v24/submission/A1.csv
 ```
 
@@ -75,11 +81,12 @@ These versioned CSV files are kept locally but are still ignored by Git. Use the
    - historical item distribution in `test.csv`;
    - mismatch between historical item feature mix and current predicted item feature mix.
 
-4. Audit `v24` predictions by segment:
+4. Audit `v32` predictions and the v31/v32 candidate set by segment:
    - top1, top3, top10 feature distribution;
    - share of recommendations already present in history;
    - history-frequency and recency rank of recommended items;
-   - changed rows versus `v22/v25`.
+   - candidate-source recall and calibration for rows accepted or rejected by the v32 gate;
+   - changed rows versus `v29/v32/v33/v34`.
 
 5. Build validation splits that match test structure more closely:
    - exact-length weighting;
@@ -87,14 +94,23 @@ These versioned CSV files are kept locally but are still ignored by Git. Use the
    - last-item or suffix stratification for medium/long histories;
    - separate zero-history and short-history holdouts.
 
+Current local tooling:
+
+```powershell
+python .\our_solution\tools\data_audit_rec_segments.py
+```
+
+This writes `our_solution/output/data_audit_rec_segments.json` locally and reports exact-length support coverage for last item, suffix2, user group, repeat ratio, and top historical item share.
+
 ## Candidate Families To Explore After Audit
 
 Only implement after a clear data diagnostic points to the segment.
 
 - Medium/long history:
-  - conditional rerank by `(last item, user group)` and item feature compatibility;
-  - adjust history-repeat score based on repeat concentration;
-  - guard `top1_changed == 0` until the validation signal is much stronger.
+  - analyze v31 candidate sources before changing a ranker: source, support, base-rank gap, and v32-gate acceptance should explain each proposed insertion;
+  - test conditional calibration by `(last item, user group)` or item feature compatibility only on a supported segment;
+  - preserve at least the v32 top5 for `>80` histories unless evidence specifically supports a higher-risk change;
+  - v33/v34 show that even freezing top3 is insufficient protection for a semi-free tail blend.
 
 - Zero history:
   - user-feature cluster priors with stronger shrinkage diagnostics;
@@ -116,20 +132,20 @@ Only implement after a clear data diagnostic points to the segment.
 Do not generate a new root `prediction.zip` unless the candidate has a real data-backed reason and passes stricter checks:
 
 ```text
-recommendation mean delta vs v24 >= +0.0008
-recommendation min split delta vs v24 > 0
+recommendation mean delta vs v32 >= +0.0005 for a normal candidate
+recommendation min split delta vs v32 >= 0
 no high-risk short-history negative split
-top1_changed == 0 for short-history rows unless separately justified
+top1_changed == 0 for short-history rows; keep v32 top5 fixed for >80 rows unless separately justified
 A2 has 10000 rows and 10 unique valid items per row
 A1 has 2751 rows if classification is touched
 ```
 
-Tiny offline improvements like `v25` are useful for analysis but should not be submitted again without a new signal.
+Tiny offline improvements are useful for analysis but should not be submitted again without a new signal. v32 transferred because the change was narrow, segment-scoped, and preserved the strong base ranking; use that as the minimum bar for any small-delta submission.
 
 ## First Concrete Work Items
 
-1. Add a data audit script under `our_solution/tools/`.
-2. Produce a JSON/Markdown segment report under `our_solution/output/` locally.
-3. Identify the top 3 segments where `v24` is most likely under-calibrated.
-4. Only then implement one candidate scoped to one segment.
-5. Compare against `v24`, not just against `v17`.
+1. Done: add a data audit script under `our_solution/tools/`.
+2. Done: implement and evaluate a high-recall candidate pool (`v31`) and a conservative gate (`v32`).
+3. Next: measure candidate-source precision, rank-gap, and support for accepted versus rejected v32-gate rows.
+4. Identify one supported subsegment, then implement one scoped calibration or candidate-source change.
+5. Compare against `v32`, not just against `v29` or `v17`.

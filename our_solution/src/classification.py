@@ -21,6 +21,7 @@ from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import normalize
 
 from .common import Timer, Trajectory, ensure_dir, stratified_split, write_json
+from .qwen_agent import ask_qwen_json, compact_json
 
 
 @dataclass
@@ -514,6 +515,188 @@ def candidate_configs() -> List[Dict[str, Any]]:
     ]
 
 
+def _bounded_int(value: Any, default: int, lower: int, upper: int) -> int:
+    try:
+        parsed = int(round(float(value)))
+    except (TypeError, ValueError):
+        parsed = default
+    return max(lower, min(upper, parsed))
+
+
+def _bounded_float(value: Any, default: float, lower: float, upper: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(lower, min(upper, parsed))
+
+
+def _bounded_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y"}:
+            return True
+        if normalized in {"false", "0", "no", "n"}:
+            return False
+    return default
+
+
+def _safe_config_name(prefix: str, raw_name: Any, index: int) -> str:
+    raw_text = str(raw_name or "").strip().lower()
+    cleaned = "".join(ch if ch.isalnum() else "_" for ch in raw_text)
+    cleaned = "_".join(part for part in cleaned.split("_") if part)
+    if not cleaned:
+        cleaned = f"candidate_{index}"
+    if not cleaned.startswith(prefix):
+        cleaned = f"{prefix}_{index:02d}_{cleaned}"
+    return cleaned[:96]
+
+
+def _classification_data_summary(data: GraphData) -> Dict[str, Any]:
+    labeled = data.labels[data.train_idx]
+    counts = np.bincount(labeled, minlength=data.num_classes)
+    return {
+        "nodes": int(data.adj.shape[0]),
+        "edges": int(data.adj.nnz),
+        "features": int(data.features.shape[1]),
+        "feature_nonzeros": int(data.features.nnz),
+        "train_nodes": int(len(data.train_idx)),
+        "test_nodes": int(len(data.test_idx)),
+        "num_classes": int(data.num_classes),
+        "class_counts": {str(i): int(count) for i, count in enumerate(counts.tolist())},
+    }
+
+
+def _sanitize_qwen_classification_config(raw: Any, index: int) -> Tuple[Optional[Dict[str, Any]], str]:
+    if not isinstance(raw, dict):
+        return None, "suggestion is not an object"
+    model_name = str(raw.get("model", "label_prop_fallback_model"))
+    if model_name != "label_prop_fallback_model":
+        return None, f"unsupported model: {model_name}"
+
+    class_weight = raw.get("fallback_class_weight", raw.get("class_weight", None))
+    if str(class_weight).lower() in {"balanced", "balance"}:
+        class_weight_value: Optional[str] = "balanced"
+    else:
+        class_weight_value = None
+
+    config = {
+        "name": _safe_config_name("qwen_cls", raw.get("name"), index),
+        "model": "label_prop_fallback_model",
+        "lp_steps": _bounded_int(raw.get("lp_steps"), 5, 1, 50),
+        "lp_alpha": _bounded_float(raw.get("lp_alpha"), 0.95, 0.50, 0.995),
+        "symmetrize": _bounded_bool(raw.get("symmetrize"), True),
+        "add_self_loop": _bounded_bool(raw.get("add_self_loop"), True),
+        "class_prior_beta": _bounded_float(raw.get("class_prior_beta"), 0.0, -0.60, 0.30),
+        "fallback": "class_prior",
+        "fallback_model_config": {
+            "name": "qwen_ridge_fallback",
+            "model": "ridge",
+            "alpha": _bounded_float(raw.get("fallback_alpha"), 0.4, 0.1, 3.0),
+            "feature_hops": _bounded_int(raw.get("fallback_feature_hops"), 1, 0, 2),
+            "use_label_prop": False,
+            "use_degree": _bounded_bool(raw.get("fallback_use_degree"), True),
+            "symmetrize": _bounded_bool(raw.get("fallback_symmetrize"), True),
+            "class_weight": class_weight_value,
+        },
+    }
+    return config, ""
+
+
+def qwen_classification_configs(
+    data: GraphData,
+    trial_summaries: List[Dict[str, Any]],
+    requested: int,
+    env_path: str | Path,
+    model: Optional[str],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    report: Dict[str, Any] = {
+        "enabled": True,
+        "requested": int(requested),
+        "status": "not_called",
+        "accepted_count": 0,
+        "rejected_count": 0,
+        "accepted_names": [],
+        "rejections": [],
+    }
+    if requested <= 0:
+        report["status"] = "no_candidates_requested"
+        return [], report
+
+    system = (
+        "You tune an anonymized sparse graph node classifier. "
+        "Return only valid JSON. Propose configs; do not invent code."
+    )
+    user = {
+        "task": "Suggest classification configs for local validation.",
+        "allowed_schema": {
+            "suggestions": [
+                {
+                    "name": "qwen_cls_short_name",
+                    "model": "label_prop_fallback_model",
+                    "lp_steps": "integer 1..50",
+                    "lp_alpha": "float 0.50..0.995",
+                    "class_prior_beta": "float -0.60..0.30",
+                    "symmetrize": "boolean",
+                    "add_self_loop": "boolean",
+                    "fallback_alpha": "float 0.1..3.0",
+                    "fallback_feature_hops": "integer 0..2",
+                    "fallback_use_degree": "boolean",
+                    "fallback_class_weight": "null or balanced",
+                    "reason": "brief rationale",
+                }
+            ]
+        },
+        "constraints": [
+            "Use only model=label_prop_fallback_model.",
+            "Prefer materially different configs over tiny perturbations.",
+            "The local validator will reject configs that do not beat the current best.",
+            f"Return at most {requested} suggestions.",
+        ],
+        "data_summary": _classification_data_summary(data),
+        "validated_trials": trial_summaries[-10:],
+    }
+    parsed, api_report = ask_qwen_json(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": compact_json(user, max_chars=9000)},
+        ],
+        env_path=env_path,
+        model=model,
+        temperature=0.25,
+        max_tokens=1800,
+    )
+    report.update(api_report)
+    if api_report.get("status") != "ok":
+        return [], report
+    suggestions = parsed.get("suggestions", parsed) if isinstance(parsed, dict) else parsed
+    if not isinstance(suggestions, list):
+        report["status"] = "invalid_payload"
+        report["rejections"].append("payload does not contain a suggestions list")
+        return [], report
+
+    configs: List[Dict[str, Any]] = []
+    seen_names = set()
+    for index, raw in enumerate(suggestions[:requested], start=1):
+        config, error = _sanitize_qwen_classification_config(raw, index)
+        if config is None:
+            report["rejections"].append(error)
+            continue
+        name = str(config["name"])
+        if name in seen_names:
+            report["rejections"].append(f"duplicate config name: {name}")
+            continue
+        seen_names.add(name)
+        configs.append(config)
+
+    report["accepted_count"] = len(configs)
+    report["rejected_count"] = len(report["rejections"])
+    report["accepted_names"] = [str(config["name"]) for config in configs]
+    return configs, report
+
+
 def run_classification(
     data_path: str | Path,
     output_dir: str | Path,
@@ -522,6 +705,10 @@ def run_classification(
     val_ratio: float = 0.12,
     sample_path: Optional[str | Path] = None,
     time_limit: Optional[float] = None,
+    use_qwen_agent: bool = False,
+    qwen_env_path: str | Path = ".env",
+    qwen_model: Optional[str] = None,
+    qwen_rounds: int = 3,
 ) -> Dict[str, Any]:
     timer = Timer()
     output_dir = ensure_dir(output_dir)
@@ -535,10 +722,23 @@ def run_classification(
     )
     configs = candidate_configs()[: max(1, budget)]
     best: Dict[str, Any] = {"val_acc": -1.0, "config": None, "model": None}
+    qwen_agent_report: Dict[str, Any] = {
+        "enabled": bool(use_qwen_agent),
+        "requested": int(qwen_rounds),
+        "status": "disabled",
+        "accepted_count": 0,
+        "rejected_count": 0,
+        "accepted_names": [],
+        "rejections": [],
+    }
+    trial_summaries: List[Dict[str, Any]] = []
+    round_id = 0
 
-    for round_id, config in enumerate(configs, start=1):
+    def evaluate_and_record(config: Dict[str, Any], origin: str) -> None:
+        nonlocal best, round_id
+        round_id += 1
         if time_limit is not None and timer.elapsed > time_limit:
-            break
+            return
         round_start = time.time()
         model = None
         if config.get("model") == "label_prop":
@@ -562,16 +762,49 @@ def run_classification(
             "val_acc": val_acc,
             "fit_size": int(len(fit_idx)),
             "val_size": int(len(val_idx)),
+            "origin": origin,
             **model_feedback,
         }
+        trial_summaries.append(
+            {
+                "round": round_id,
+                "origin": origin,
+                "name": config.get("name", ""),
+                "model": config.get("model", ""),
+                "val_acc": val_acc,
+                "feedback": model_feedback,
+                "config": config,
+            }
+        )
         if val_acc > best["val_acc"]:
             best = {"val_acc": val_acc, "config": dict(config), "model": model}
-            strategy = "KEEP_AS_BEST; retrain on all labeled nodes if no later round improves."
+            strategy = f"KEEP_AS_BEST; {origin} candidate will be retrained if no later round improves."
             trajectory.best_round = round_id
             trajectory.selected_config = dict(config)
         else:
-            strategy = "REJECT; validation accuracy did not improve."
+            strategy = f"REJECT; {origin} candidate did not improve validation accuracy."
         trajectory.add(round_id, dict(config), feedback, strategy, time.time() - round_start)
+
+    for config in configs:
+        if time_limit is not None and timer.elapsed > time_limit:
+            break
+        evaluate_and_record(config, origin="deterministic")
+
+    if use_qwen_agent and qwen_rounds > 0:
+        if time_limit is not None and timer.elapsed > time_limit:
+            qwen_agent_report["status"] = "time_limit_exhausted"
+        else:
+            qwen_configs, qwen_agent_report = qwen_classification_configs(
+                data=data,
+                trial_summaries=trial_summaries,
+                requested=qwen_rounds,
+                env_path=qwen_env_path,
+                model=qwen_model,
+            )
+            for config in qwen_configs:
+                if time_limit is not None and timer.elapsed > time_limit:
+                    break
+                evaluate_and_record(config, origin="qwen_agent")
 
     if best["config"] is None:
         raise RuntimeError("No classification configuration was evaluated.")
@@ -622,6 +855,7 @@ def run_classification(
         "duration": round(timer.elapsed, 4),
         "class_distribution": out["label"].value_counts().sort_index().to_dict(),
         "final_stats": final_stats,
+        "qwen_agent": qwen_agent_report,
     }
     trajectory.selected_config = final_config
     write_json(output_dir / "trajectory_B1.json", trajectory.to_dict())
